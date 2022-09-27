@@ -1,0 +1,286 @@
+---
+title: "Processo Seletivo 4intelligence"
+author: "Hugo Lima de Oliveira"
+date: '2022-09-26'
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+Definição do diretório de trabalho e importação das bibliotecas
+
+```{r}
+setwd('C:\\Users\\Hugol\\Downloads\\4intelligence')
+library(readxl)
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(ggthemes)
+library(sidrar)
+library(xtable)
+```
+```{r}
+#leitura da base
+#extração do nome das planilhas
+sheet_names <- excel_sheets("dados_desafiodatascientistintern_vendas_distribuidoras_anp.xlsx")          
+sheet_names
+#função que cria dataframe para cada planilha
+list_all <- lapply(sheet_names, function(x) {          
+  as.data.frame(read_excel("dados_desafiodatascientistintern_vendas_distribuidoras_anp.xlsx", sheet = x)) } )
+
+names(list_all) <- sheet_names    
+#organização das colunas para cada dataframe
+diesel=list_all$diesel %>%
+  gather('ano','diesel',3:23) %>%
+  rename(mes=meses,
+         cd_uf=regiao)
+gasolina=list_all$gasolina %>%
+  gather('ano','gasolina',3:23) %>%
+  rename(mes=meses,
+         cd_uf=regiao)
+etanol=list_all$etanol %>%
+  gather('ano','etanol',3:23) %>%
+  rename(mes=meses,
+         cd_uf=regiao)
+xtable(diesel)
+xtable(gasolina)
+xtable(etanol)
+```
+
+
+Unificação das bases de cada combustível
+```{r}
+#definição de parâmetros
+trim1=c(1,2,3)
+trim2=c(4,5,6)
+trim3=c(7,8,9)
+sem1=c(1,2,3,4,5,6)
+anos=c(2000:2020)
+#unificação das bases
+df=diesel %>%
+  full_join(gasolina,by=c('cd_uf','ano','mes')) %>%
+  full_join(etanol,by=c('cd_uf','ano','mes')) %>%
+  mutate(trimestre=ifelse(mes %in% trim1,1,
+                          ifelse(mes %in% trim2,2,
+                                 ifelse(mes %in% trim3,3,4))),
+         semestre=ifelse(mes %in% sem1,1,2))
+#base anual
+df_anual=df %>% group_by(ano,cd_uf) %>%
+  summarise(gasolina=mean(gasolina),
+            etanol=mean(etanol),
+            diesel=mean(diesel)) %>%
+  mutate(min_diesel=min(diesel),
+         max_diesel=max(diesel),
+         min_etanol=min(etanol),
+         max_etanol=max(etanol),
+         min_gasolina=min(gasolina),
+         max_gasolina=max(gasolina))
+#base trimestral
+df_trimestral=df %>% group_by(trimestre,cd_uf) %>%
+  summarise(gasolina=mean(gasolina),
+            etanol=mean(etanol),
+            diesel=mean(diesel)) %>%
+  mutate(min_diesel=min(diesel),
+         max_diesel=max(diesel),
+         min_etanol=min(etanol),
+         max_etanol=max(etanol),
+         min_gasolina=min(gasolina),
+         max_gasolina=max(gasolina))
+#base mensal
+df_mensal=df %>% group_by(mes,cd_uf) %>%
+  summarise(gasolina=mean(gasolina),
+            etanol=mean(etanol),
+            diesel=mean(diesel)) %>%
+  mutate(min_diesel=min(diesel),
+         max_diesel=max(diesel),
+         min_etanol=min(etanol),
+         max_etanol=max(etanol),
+         min_gasolina=min(gasolina),
+         max_gasolina=max(gasolina))
+#base semestral
+df_semestral=df %>% group_by(semestre,cd_uf) %>%
+  summarise(gasolina=mean(gasolina),
+            etanol=mean(etanol),
+            diesel=mean(diesel)) %>%
+  mutate(min_diesel=min(diesel),
+         max_diesel=max(diesel),
+         min_etanol=min(etanol),
+         max_etanol=max(etanol),
+         min_gasolina=min(gasolina),
+         max_gasolina=max(gasolina))
+xtable(df)
+```
+
+Importação da base do IPCA (número índice de janeiro 2001 até agosto de 2022) para fazer a deflação dos preços dos combustíveis
+
+```{r}
+#ipca
+ipca=read.csv2('ipca.csv') %>%
+  mutate(n_indice=as.numeric(n_indice),
+         ano=as.numeric(ano))
+xtable(ipca)
+
+```
+
+Definição dos parâmetros
+
+```{r}
+ufs=c('DISTRITO FEDERAL','MINAS GERAIS','SAO PAULO','TOCANTINS','GOIAS','MATO GROSSO','MARANHAO','PARA')
+combustiveis=c('ETANOL HIDRATADO','GASOLINA COMUM','OLEO DIESEL')
+```
+
+Importação da [base]('https://www.gov.br/anp/pt-br/assuntos/precos-e-defesa-da-concorrencia/precos/precos-revenda-e-de-distribuicao-combustiveis/serie-historica-do-levantamento-de-precos') de preços médios dos combustíveis por ano e mês
+
+```{r, warning=FALSE}
+#base de 2001 a 2012
+anp_2001_2012=read_excel('precos_anp_2001_2012.xlsx') %>%
+  select(mes,uf,unidade_medida,preco_medio_revenda,combustivel)
+#base de 2013 a 2022
+anp_2013_2022=read_excel('precos_anp_2013_2022.xlsx')  %>%
+  select(mes,uf,unidade_medida,preco_medio_revenda,combustivel)
+#união das duas bases
+anp_precos=anp_2001_2012 %>% union(anp_2013_2022) %>%
+  mutate(ano=substr(mes,1,4),                      #definição das variáveis temporais
+         mes=substr(mes,6,7),
+         mes=as.numeric(mes),
+         ano=as.numeric(ano)) %>%
+  subset((uf %in% ufs) & (combustivel %in% combustiveis)) %>% #filtro para ufs e combustiveis
+  spread(combustivel,preco_medio_revenda) %>%                
+  rename(gasolina_preco_revenda_l=`GASOLINA COMUM`,
+         etanol_preco_revenda_l=`ETANOL HIDRATADO`,
+         diesel_preco_revenda_l= `OLEO DIESEL`) %>%
+  mutate(gasolina_preco_revenda_m3=gasolina_preco_revenda_l*1000, #preços por m3
+         etanol_preco_revenda_m3=etanol_preco_revenda_l*1000,
+         diesel_preco_revenda_m3=diesel_preco_revenda_l*1000)
+xtable(anp_precos)
+
+```
+
+Deflação dos preços
+```{r}
+anp_precos_reais=anp_precos %>% full_join(ipca, by=c('ano','mes')) %>%
+  mutate(gasolina_preco_real_l=gasolina_preco_revenda_l*n_indice,
+         etanol_preco_real_l=etanol_preco_revenda_l*n_indice,
+         diesel_preco_real_l=diesel_preco_revenda_l*n_indice,
+         gasolina_preco_real_m3=gasolina_preco_revenda_m3*n_indice,
+         etanol_preco_real_m3=etanol_preco_revenda_m3*n_indice,
+         diesel_preco_real_m3=diesel_preco_revenda_m3*n_indice)
+xtable(anp_precos_reais)
+```
+
+Visualição gráfica da sazonalidade das vendas no mercado de combustível nos últimos 5 ano, por UF.
+```{r, echo=FALSE, fig.width=10}
+g_ufs=ggplot(df_anual%>%subset(cd_uf!='br' & ano>2014), aes(x=ano,y=gasolina, colour=cd_uf, group=cd_uf))+
+  geom_line() +
+  labs(x="Ano",y='m^3 vendidos') + 
+  ggtitle('Série histórica dos últimos 5 anos da venda de gasolina por UF') +
+  theme_economist()
+plot(g_ufs)
+```
+A partir do gráfico se consegue compreender a sazonalidade e a dimensão das vendas de gasolina em cada UF. Primeiramente é importante ressaltar que o mercado com o maior vendas é o paulista, seguido por Minas Gerais. Isso se deve à quantidade de automóveis grande nos dois estados, à sua vasta população, e a alta densidade de indústrias. Quanto à sazonalidade se percebe que ela é similar em todas as UF's, com crescimento até meados de 2017, decrescimento até 2018 e desaceleração desse descrescimento de 2018 até 2020.
+Quanto à sazonalidade das vendas de gasolina no Brasil, se encontra um caso similar, como se confere a seguir:
+
+Visualição gráfica da sazonalidade das vendas no mercado de combustível nos últimos 5 ano, para o Brasil.
+```{r, echo=FALSE, fig.width=10}
+variables=c(diesel,gasolina,etanol)
+g_br=ggplot(df_anual%>%subset((cd_uf=='br')&(as.numeric(ano)>2014)), aes(x=as.numeric(ano)))+
+  geom_line(aes(y=diesel/100,color='diesel')) +
+  geom_line(aes(y=gasolina/100,color='gasolina')) +
+  geom_line(aes(y=etanol/100,color='etanol'))+
+  theme_economist() +
+  labs(x="Ano",y='m^3 vendidos (em 100 m^3)') + 
+  ggtitle('Série histórica dos últimos 5 anos da venda de combustíveis no Brasil') 
+plot(g_br)
+```
+Claramente o combustível com maior venda por metro cúbico é o diesel, que se distancia com certa folga da gasolina e ainda mais do etanol. No caso da gasolina, o caso é quase igual ao das UF's analisadas, a única diferença está no leve crescimento de 2018 a 2019. Já o diesel, ao contrário da gasolina, decresce de 2015 a 2016, mas a partir de 2016 ele cresce de maneira similar até 2019, quandoa acelera ainda mais. Por último, o etano cai as vendas de 2015 para 2017, quando cresce até 2019, em 2020, assim como a gasolina, suas vendas caem novamente.
+
+Gráfico do preço real dos combustíveis nos últimos 5 anos, para o Brasil.
+```{r, echo=FALSE, fig.width=10}
+grafico=anp_precos_reais %>% subset(ano>2014) %>%
+  group_by(ano) %>%
+  summarize(gasolina_preco_real_l=mean(as.numeric(gasolina_preco_real_l),na.rm=TRUE),
+            diesel_preco_real_l=mean(as.numeric(diesel_preco_real_l),na.rm=TRUE),
+            etanol_preco_real_l=mean(as.numeric(etanol_preco_real_l),na.rm=TRUE))
+
+
+g_precos=ggplot(grafico, aes(x=ano)) +
+  geom_line(aes(y=gasolina_preco_real_l, color='gasolina_preco_real_l')) +
+  geom_line(aes(y=diesel_preco_real_l, color='diesel_preco_real_l')) +
+  geom_line(aes(y=etanol_preco_real_l, color='etanol_preco_real_l'))+
+  theme_economist() +
+  labs(x="Ano",y='Preço real em R$') +
+  ggtitle('Série histórica dos últimos 5 anos do preço real dos combustíveis')
+
+plot(g_precos)
+```
+Se percebe uma tendência similar nos 3 combustíveis. A gasolina é o combustível mais caro, como era de se esperar, uma vez que é o mais demandado pelo mercado, seguido pelo diesel e depois pelo etanol. Os 3 crescem de maneira acelerada até 2018, quando começam a crescer menos. Já em 2020 o preço dos 3 aumenta muito, provavelmente esse efeito foi causado pela pandemia. Esse crescimento vertiginoso ocorre até os dias de hoje, apesar disso a gasolina e o etanol diminuiram sua velocidade de crescimento, o contrário ocorreu com o diesel.
+
+Tabelas com dados para basear as respostas das questões 2,3 e 4.
+Importação via API do Sidra de dados['https://sidra.ibge.gov.br/tabela/6677'] da PNADc anual, sobre o percentual de moradores em domicílios (em mil pessoas) que tem motocicleta, carro, ou motocicleta e carro por UF e Brasil de 2016 a 2019.
+
+```{r}
+#Domicílios com carro, ou motocicleta, ou carro e motocicleta
+cd_ufs=c('1','53','31','35','17','52','51','21','15')
+pct_carros=get_sidra(api='/t/6677/n1/all/n3/all/v/10252/p/all/c845/47554/d/v10252%201') %>%
+  spread(`Posse de bens`,`Valor`) %>%
+  select(`Brasil e Unidade da Federação (Código)`,`Brasil e Unidade da Federação`,`Ano`,`Carro`) %>%
+  rename(n_uf=`Brasil e Unidade da Federação (Código)`,
+         uf=`Brasil e Unidade da Federação`,
+         ano=`Ano`,
+         pct_carro=`Carro`)
+pct_motos=get_sidra(api='/t/6677/n1/all/n3/all/v/10252/p/all/c845/47555/d/v10252%201') %>%
+  spread(`Posse de bens`,`Valor`) %>%
+  select(`Brasil e Unidade da Federação (Código)`,`Brasil e Unidade da Federação`,`Ano`,`Motocicleta`) %>%
+  rename(n_uf=`Brasil e Unidade da Federação (Código)`,
+         uf=`Brasil e Unidade da Federação`,
+         ano=`Ano`,
+         pct_moto=`Motocicleta`)
+pct_motos_e_carros=get_sidra(api='/t/6677/n1/all/n3/all/v/10252/p/all/c845/47556/d/v10252%201') %>%
+  spread(`Posse de bens`,`Valor`) %>%
+  select(`Brasil e Unidade da Federação (Código)`,`Brasil e Unidade da Federação`,`Ano`,`Carro e motocicleta`) %>%
+  rename(n_uf=`Brasil e Unidade da Federação (Código)`,
+         uf=`Brasil e Unidade da Federação`,
+         ano=`Ano`,
+         pct_moto_e_carro=`Carro e motocicleta`)
+pct_veiculos=pct_carros %>% left_join(pct_motos, by=c('n_uf','uf','ano')) %>%
+  left_join(pct_motos_e_carros, by=c('n_uf','uf','ano')) %>% subset(n_uf %in% cd_ufs)
+
+xtable(pct_veiculos)
+```
+
+Importação via API do Sidra de dados['https://sidra.ibge.gov.br/tabela/6407'] da PNADc anual, sobre a população (em mil pessoas) por UF e Brasil de 2012 a 2021.
+
+```{r}
+pop=get_sidra(api="/t/6407/n3/all/v/606/p/all/c2/6794/c58/95253")
+
+pop2=pop %>%
+  select(`Unidade da Federação (Código)`,`Unidade da Federação`,Valor,Variável,Ano) %>%
+  spread(Variável,Valor) %>%
+  rename(ano=`Ano`,
+         uf = `Unidade da Federação`,
+         n_uf = `Unidade da Federação (Código)`,
+         vl_populacao = `População`) %>% subset(n_uf %in% cd_ufs)
+xtable(pop2)
+```
+
+Importação via API do Sidra de dados['https://sidra.ibge.gov.br/tabela/6407'] da PNADc anual, rendimento médio mensal real domiciliar per capita por UF e Brasil de 2012 a 2021.
+
+```{r}
+#rendimento médio
+rend_medio=get_sidra(api="/t/7534/n3/all/v/10816/p/all/c1042/49283")
+
+rend_medio2=rend_medio %>%
+  select(`Unidade da Federação (Código)`,`Unidade da Federação`,Valor,Variável,Ano) %>%
+  spread(Variável,Valor) %>%
+  rename(ano=`Ano`,
+         uf = `Unidade da Federação`,
+         n_uf = `Unidade da Federação (Código)`,
+         vl_renda_trab_pc = `Rendimento médio mensal real domiciliar per capita, a preços médios do último ano`) %>% subset(n_uf %in% cd_ufs)
+xtable(rend_medio2)
+```
